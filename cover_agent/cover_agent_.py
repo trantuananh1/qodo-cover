@@ -1,4 +1,5 @@
 import datetime
+import logging
 import os
 import shutil
 import sys
@@ -36,8 +37,8 @@ class CoverAgent:
         config: CoverAgentConfig,
         task_id: int = None,
         agent_completion: AgentCompletionABC = None,
-        built_tool_adapter: Optional[BuiltToolAdapterABC] = None,
-        logger: Optional[CustomLogger] = None,
+        # built_tool_adapter: Optional[BuiltToolAdapterABC] = None,
+        logger: Optional[logging.Logger] = None,
     ):
         """
         Initialize the CoverAgent instance.
@@ -58,7 +59,7 @@ class CoverAgent:
         """
         self.config = config
         self.generate_log_files = not config.suppress_log_files
-        self.adapter = built_tool_adapter
+        # self.adapter = built_tool_adapter
         self.task_id = task_id
         self.total_input_token_count = 0
         self.total_output_token_count = 0
@@ -92,10 +93,10 @@ class CoverAgent:
         if hasattr(self.config, "run_each_test_separately") and self.config.run_each_test_separately:
             # Calculate a relative path for a test file
             # Handle commands from some known frameworks 
-            if self.adapter:
-                new_command_line = self.adapter.adapt_test_command(test_file_relative_path) 
-            else:
-                new_command_line = adapt_test_command(test_command, test_file_relative_path)
+            # if self.adapter:
+            #     new_command_line = self.adapter.adapt_test_command(test_file_relative_path) 
+            # else:
+            new_command_line = adapt_test_command(test_command, test_file_relative_path)
 
             if not new_command_line:
                 (
@@ -173,14 +174,14 @@ class CoverAgent:
         config: CoverAgentConfig,
         task_id: int = None,
         agent_completion: AgentCompletionABC = None,
-        built_tool_adapter: Optional[BuiltToolAdapterABC] = None,
+        # built_tool_adapter: Optional[BuiltToolAdapterABC] = None,
         semaphore: asyncio.Semaphore = None,
-        logger: Optional[CustomLogger] = None,
+        logger: Optional[logging.Logger] = None,
     ):
         '''
         factory method to hanlde two phase __init__ method and async _setup method
         '''
-        cover_agent = cls(config, task_id, agent_completion, built_tool_adapter, logger)
+        cover_agent = cls(config, task_id, agent_completion, logger)
         await cover_agent._setup(semaphore)
         return cover_agent
 
@@ -200,6 +201,8 @@ class CoverAgent:
             "record_mode": True,
             "generate_log_files": self.generate_log_files,
             "task_id": self.task_id,
+            "copilot": self.config.copilot,
+            "claude_code": self.config.claude_code,
         }
         if self.config.record_mode:
             # In record mode, always use AICaller
@@ -310,21 +313,27 @@ class CoverAgent:
         self.log_coverage()
         self.logger.info("Starting test generation and validation.")
         generated_tests_dict = await self.test_gen.generate_tests(failed_test_runs, language, test_framework, coverage_report)
+        if isinstance(generated_tests_dict, dict):
+            new_tests = generated_tests_dict.get("new_tests", [])
+        else:
+            new_tests = generated_tests_dict or []
 
-        num_generated_tests_dict = len(generated_tests_dict.get("new_tests", []))
+        num_generated_tests_dict = len(new_tests)
         self.generated_tests_per_iteration.append(num_generated_tests_dict)
 
         try:
             test_results = [
-                await self.test_validator.validate_test(test) for test in generated_tests_dict.get("new_tests", [])
+                await self.test_validator.validate_test(test) for test in new_tests
             ]
 
             num_accepted = sum(1 for r in test_results if r.get("status") == "PASS")
             self.accepted_tests_per_iteration.append(num_accepted)
 
             # Insert results into database
-            if self.has_test_db():
+            if self.has_test_db() and test_results:
                 for result in test_results:
+                    if result == None:
+                        continue
                     result["prompt"] = self.test_gen.prompt
                     self.test_db.insert_attempt(result)
 

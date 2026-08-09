@@ -1,3 +1,4 @@
+from typing import Optional
 import os
 import argparse
 from time import sleep
@@ -14,7 +15,7 @@ from cover_agent.settings.config_loader import get_settings
 from cover_agent.utils import load_yaml
 
 
-def find_java_primary_file(test_file, project_root):
+def find_java_primary_file(test_file: str, project_root: str):
     """
     Find the primary source file for a Java test file based on naming conventions.
 
@@ -72,7 +73,7 @@ def find_java_primary_file(test_file, project_root):
     return None
 
 
-async def analyze_context(test_file, context_files, args, ai_caller) -> (str, str, int, int):
+async def analyze_context(test_file, context_files, args, ai_caller) -> tuple[str, list[str], int, int]:
     """
     # we now want to analyze the test file against the source files and determine several things:
     # 1. If this test file is a unit test file
@@ -103,15 +104,11 @@ async def analyze_context(test_file, context_files, args, ai_caller) -> (str, st
         user_prompt = environment.from_string(
             get_settings().analyze_test_against_context.user
         ).render(variables)
-        # print("0000000000000000000000000000000000000000000000000000000000000000000000")
-        # print(user_prompt)
-        # print("0000000000000000000000000000000000000000000000000000000000000000000000")
         response, prompt_token_count, response_token_count = await ai_caller.call_model(
             prompt={"system": system_prompt, "user": user_prompt}, stream=False
         )
         response_dict = load_yaml(response)
         if int(response_dict.get("is_this_a_unit_test", 0)) == 1:
-        # if int(response_dict.get("is_unit_test", 0)) == 1:
             source_file_rel = response_dict.get("main_file", "").strip().strip("`")
             source_file = os.path.join(args.project_root, source_file_rel)
             for file in context_files:
@@ -130,7 +127,7 @@ async def analyze_context(test_file, context_files, args, ai_caller) -> (str, st
 
     return source_file, context_files_include, prompt_token_count, response_token_count
 
-async def find_all_context(args: argparse.Namespace, lsp: LanguageServer, test_file: Path) -> list[tuple[str, str, str, int, int]]:
+async def find_all_context(args: argparse.Namespace, lsp: LanguageServer, test_file: str) -> list[tuple[str, str, str, int, int]]:
     '''
     find and return all context files using tree-sitter and LSP
     Returns list of tuple containing:
@@ -151,9 +148,9 @@ async def find_all_context(args: argparse.Namespace, lsp: LanguageServer, test_f
             # default to name being class name and start and end line as the start and line of file
             context_file = (str(primary_file), os.path.basename(primary_file).split('.')[0], 'class', 0, -1) 
             context_files.append(context_file)
-            await _recursive_search(0, args, potential_primary, context_files, lsp)
+            await _recursive_search(0, args, Path(potential_primary), context_files, lsp)
 
-    await _recursive_search(0, args, test_file, context_files, lsp)
+    await _recursive_search(0, args, Path(test_file), context_files, lsp)
 
     return context_files
 
@@ -222,7 +219,7 @@ async def _recursive_search(call_num: int, args: argparse.Namespace, file: Path,
     # 3. Use LSP to perform a "go to definition" lookup on the found symbols.
     # This returns a set of (file_path, symbol_name, symbol_scope, definition_start_line) tuples.
     context_files_and_lines: set[tuple[str, str, str, int]] = await lsp.get_direct_context_file_and_line(
-        query_results, captures, args.project_language, args.project_root, file
+        query_results, captures, args.project_language, args.project_root, str(file)
     )
     # print("========context_files_and_lines: ==============")
     # print(context_files_and_lines)
@@ -279,7 +276,7 @@ async def _recursive_search(call_num: int, args: argparse.Namespace, file: Path,
 
 
 # not used
-async def find_test_file_context(args: argparse.Namespace, lsp: LanguageServer, test_file: Path) -> list[dict]:
+async def find_test_file_context(args: argparse.Namespace, lsp: LanguageServer, test_file: str):
     '''
         function to find all context files recursively, and return list of dictionary containing file path, start line and end line.
     '''
@@ -297,6 +294,8 @@ async def find_test_file_context(args: argparse.Namespace, lsp: LanguageServer, 
             project_base_path=args.project_root,
         )
         results = fname_summary.get_query_results_in_range()
+        if results == None:
+            return
         # print("____________")
         # print("results: ", results)
         query_results, captures = results
